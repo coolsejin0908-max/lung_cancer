@@ -6,27 +6,25 @@ import matplotlib.pyplot as plt
 from matplotlib import font_manager, rc
 import io
 
-# ---------- 한글 폰트 설정 (NanumGothic 강제 지정) ----------
+# ---------- 한글 폰트 설정 (Streamlit Cloud + packages.txt) ----------
 def set_korean_font():
-    # 나눔폰트 설치 경로 (packages.txt로 설치됨)
     font_path = '/usr/share/fonts/truetype/nanum/NanumGothic.ttf'
     try:
         font_manager.fontManager.addfont(font_path)
         font_name = font_manager.FontProperties(fname=font_path).get_name()
         rc('font', family=font_name)
     except:
-        # 폰트가 없으면 시스템 기본 폰트 사용 (영문만 깔끔)
         rc('font', family='DejaVu Sans')
     plt.rcParams['axes.unicode_minus'] = False
 
 set_korean_font()
 
-# ---------- 나머지 코드 (이전과 동일) ----------
+# ---------- 페이지 설정 ----------
 st.set_page_config(page_title="🧬 AI 환자 군집 분석", layout="wide")
 st.title("🧬 AI 기반 환자 군집 분석 시스템")
 st.markdown("#### 흡연·음주·나이 정보로 환자 유형을 예측하고 맞춤 조언을 받으세요")
 
-# 모델 & 스케일러 로드
+# ---------- 모델 & 스케일러 로드 ----------
 @st.cache_resource
 def load_model_scaler():
     try:
@@ -40,7 +38,7 @@ def load_model_scaler():
 model, scaler = load_model_scaler()
 st.success("✅ AI 모델이 준비되었습니다")
 
-# 데이터 로드 (시각화용)
+# ---------- 데이터 로드 (시각화용) ----------
 @st.cache_data
 def load_data():
     try:
@@ -62,19 +60,48 @@ def load_data():
 
 df = load_data()
 
-# 사이드바 입력
+# ---------- 사이드바 입력 (항상 표시) ----------
 st.sidebar.header("📝 환자 정보 입력")
 smoking = st.sidebar.slider("🚬 흡연 정도", 0.0, 10.0, 3.0, 0.5)
 alcohol = st.sidebar.slider("🍺 음주 정도", 0.0, 10.0, 2.0, 0.5)
 age = st.sidebar.slider("🎂 나이", 18, 100, 45, 1)
 
-input_df = pd.DataFrame([[smoking, alcohol, age]], columns=['흡연 정도', '음주 정도', '나이'])
-input_scaled = scaler.transform(input_df)
+# ---------- 라디오 버튼 (항상 표시) ----------
+st.subheader("📊 군집 시각화 (축 선택)")
+viz_option = st.radio(
+    "비교할 축을 선택하세요",
+    ["흡연 정도 vs 음주 정도", "나이 vs 흡연 정도", "나이 vs 음주 정도"],
+    horizontal=True,
+    key="viz_radio"
+)
 
-# 예측 버튼
+# 선택된 축에 따라 그래프 그리기 (새 환자 미표시, 기존 군집만)
+fig, ax = plt.subplots(figsize=(8, 6))
+
+if viz_option == "흡연 정도 vs 음주 정도":
+    x, y = '흡연 정도', '음주 정도'
+elif viz_option == "나이 vs 흡연 정도":
+    x, y = '나이', '흡연 정도'
+else:
+    x, y = '나이', '음주 정도'
+
+# 기존 환자 산점도 (군집별 색상)
+scatter = ax.scatter(df[x], df[y], c=df['cluster'], cmap='viridis', alpha=0.6, s=60, edgecolors='black', linewidth=0.5)
+ax.set_xlabel(x, fontsize=12)
+ax.set_ylabel(y, fontsize=12)
+ax.set_title(f"기존 환자 군집 분포 ({x} vs {y})", fontsize=14)
+plt.colorbar(scatter, ax=ax, label='군집')
+
+st.pyplot(fig)
+
+# ---------- 예측 버튼 (새 환자 표시) ----------
+st.markdown("---")
 if st.sidebar.button("🔮 환자 군집 예측", use_container_width=True):
+    input_df = pd.DataFrame([[smoking, alcohol, age]], columns=['흡연 정도', '음주 정도', '나이'])
+    input_scaled = scaler.transform(input_df)
     pred_cluster = model.predict(input_scaled)[0]
     
+    # 결과 메트릭
     col1, col2, col3, col4 = st.columns(4)
     with col1: st.metric("📊 흡연 정도", f"{smoking} / 10")
     with col2: st.metric("🍷 음주 정도", f"{alcohol} / 10")
@@ -92,42 +119,37 @@ if st.sidebar.button("🔮 환자 군집 예측", use_container_width=True):
     else:
         st.error("🚨 **고위험군**\n- 폐암 위험이 높습니다.\n- 지금 즉시 금연하고 저선량 CT 검진을 받으세요.")
     
-    # 시각화
-    st.subheader("📊 군집 시각화")
-    viz = st.radio("축 선택", ["흡연 정도 vs 음주 정도", "나이 vs 흡연 정도", "나이 vs 음주 정도"], horizontal=True)
-    
-    fig, ax = plt.subplots(figsize=(8,6))
-    if viz == "흡연 정도 vs 음주 정도":
-        x, y = '흡연 정도', '음주 정도'
+    # 현재 선택된 축에 새 환자 추가하여 그래프 다시 그리기
+    fig2, ax2 = plt.subplots(figsize=(8, 6))
+    if viz_option == "흡연 정도 vs 음주 정도":
+        x2, y2 = '흡연 정도', '음주 정도'
         new_x, new_y = smoking, alcohol
-    elif viz == "나이 vs 흡연 정도":
-        x, y = '나이', '흡연 정도'
+    elif viz_option == "나이 vs 흡연 정도":
+        x2, y2 = '나이', '흡연 정도'
         new_x, new_y = age, smoking
     else:
-        x, y = '나이', '음주 정도'
+        x2, y2 = '나이', '음주 정도'
         new_x, new_y = age, alcohol
     
-    ax.scatter(df[x], df[y], c=df['cluster'], cmap='viridis', alpha=0.6, s=60, edgecolors='black')
-    ax.scatter(new_x, new_y, c='red', s=300, marker='X', edgecolors='white', linewidth=2, label='새 환자')
-    ax.set_xlabel(x)
-    ax.set_ylabel(y)
-    ax.set_title(f"환자 군집 분포 ({x} vs {y})")
-    ax.legend()
-    plt.colorbar(ax.collections[0], ax=ax, label='군집')
-    st.pyplot(fig)
+    ax2.scatter(df[x2], df[y2], c=df['cluster'], cmap='viridis', alpha=0.6, s=60, edgecolors='black')
+    ax2.scatter(new_x, new_y, c='red', s=300, marker='X', edgecolors='white', linewidth=2, label='새 환자')
+    ax2.set_xlabel(x2)
+    ax2.set_ylabel(y2)
+    ax2.set_title(f"새 환자 포함 군집 분포 ({x2} vs {y2})")
+    ax2.legend()
+    plt.colorbar(ax2.collections[0], ax=ax2, label='군집')
+    st.pyplot(fig2)
     
-    # 그래프 저장
+    # 그래프 이미지 다운로드
     buf = io.BytesIO()
-    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    fig2.savefig(buf, format='png', dpi=150, bbox_inches='tight')
     buf.seek(0)
-    st.download_button("📸 그래프 이미지 다운로드", data=buf, file_name="군집_분석.png", mime="image/png")
-else:
-    st.info("👈 왼쪽 사이드바에서 정보를 입력하고 예측 버튼을 누르세요.")
+    st.download_button("📸 예측 결과 그래프 다운로드", data=buf, file_name="군집_예측_결과.png", mime="image/png")
 
-# 데이터 다운로드
-with st.expander("📂 데이터 미리보기"):
-    st.dataframe(df.head(10))
-    csv = df.to_csv(index=False).encode('utf-8-sig')
-    st.download_button("📥 CSV 다운로드", data=csv, file_name="환자_군집_데이터.csv", mime="text/csv")
+# ---------- 데이터 미리보기 및 다운로드 ----------
+with st.expander("📂 기존 환자 데이터 미리보기 (군집 포함)"):
+    st.dataframe(df.head(10), use_container_width=True)
+    csv_data = df.to_csv(index=False).encode('utf-8-sig')
+    st.download_button("📥 CSV 다운로드", data=csv_data, file_name="환자_군집_데이터.csv", mime="text/csv")
 
 st.caption("의학적 진단이 아닌 AI 참고용입니다.")
